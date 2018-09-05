@@ -53,7 +53,7 @@ def info_content(x, pseudo_counts=0):
     n_x = x[0, :, :]
     n_x += pseudo_counts
     n_x = n_x / n_x.sum(axis=0)
-    h_x = - np.sum(n_x * np.log(n_x), axis=0)     
+    h_x = - np.sum(n_x * np.log(n_x), axis=0)
 
     h = h_bg - h_x
 
@@ -121,7 +121,7 @@ def average_seq(shape):
     return a
 
 
-def deprocess_dna(input_array, input_range=(0, 1), 
+def deprocess_dna(input_array, input_range=(0, 1),
                         smoothing_constant=0.0001):
     # normalize tensor: center on 0., ensure std is 0.1
     input_array = input_array.copy()
@@ -300,7 +300,7 @@ class LPNorm(Loss):
         else:
             value = K.pow(K.sum(K.pow(K.abs(self.img), self.p)), 1. / self.p)
 
-        return normalize(self.img, value)  
+        return normalize(self.img, value)
 
 
 class InformationContent(Loss):
@@ -321,9 +321,9 @@ class InformationContent(Loss):
 
     def build_loss(self):
         self.img = self.img / self.img.sum(axis=1)
-        K.log() 
+        K.log()
 
-        return 
+        return
 
 
 
@@ -471,7 +471,7 @@ class Optimizer(object):
         # Trigger on_end
         for c in callbacks:
             c.on_end()
-        
+
         if deprocess_mode == 'dna':
             out_array = deprocess_dna(best_input[0])
         elif deprocess_mode == 'img':
@@ -479,9 +479,9 @@ class Optimizer(object):
         else:
             out_array = best_input[0]
 
-        return out_array, grads, wrt_value    
-    
-    
+        return out_array, grads, wrt_value
+
+
 ######################################################################################################
 
 
@@ -506,8 +506,8 @@ def visualize_activation_with_losses(input_tensor, losses, wrt_tensor=None,
     ## If range has integer numbers, cast to 'uint8'
     #if isinstance(input_range[0], int) and isinstance(input_range[1], int):
     #    img = np.clip(img, input_range[0], input_range[1]).astype('uint8')
-    
-    # for sequences, we don't need to change it to channels_last 
+
+    # for sequences, we don't need to change it to channels_last
     #if K.image_data_format() == 'channels_first':
     #    img = np.moveaxis(img, 0, -1)
 
@@ -522,7 +522,7 @@ def visualize_activation(model, layer_idx, filter_indices=None, wrt_tensor=None,
                          lr = 0.001,
                          deprocess_mode='dna',
                          **optimizer_params):
-   
+
     if backprop_modifier is not None:
         modifier_fn = get(backprop_modifier)
         model = modifier_fn(model)
@@ -540,6 +540,6 @@ def visualize_activation(model, layer_idx, filter_indices=None, wrt_tensor=None,
 
     return visualize_activation_with_losses(model.inputs[0], losses, wrt_tensor,
                                             seed_input, random_input_mode,
-                                            input_range, 
+                                            input_range,
                                             deprocess_mode,
                                             **optimizer_params)

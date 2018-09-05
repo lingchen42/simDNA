@@ -23,7 +23,7 @@ def f_window(i, kernel_sizes, strides):
     return (kernel_sizes[i]-1)*strides[i-1] + f_window(i-1, kernel_sizes, strides)
 
 
-def receptive_field_size(model):
+def receptive_field_size(model, layer_name):
     layers = [l for l in model.layers if ("conv2d" in l.name) or \
                                          ("max_pooling2d" in l.name)]
     kernel_sizes = []

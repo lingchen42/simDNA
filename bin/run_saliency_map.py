@@ -10,31 +10,33 @@ from keras.models import load_model
 import tensorflow as tf
 
 
-def pos_smaps(layer_idx, model, seq_arrs, seqs, 
+def pos_smaps(layer_idx, model, seq_arrs, seqs,
               df_pos_module, df_pos_motif, outbase):
     neurons = model.layers[layer_idx].filters
     for neuron in range(neurons):
-        smaps = []
-        for i in range(seq_arrs.shape[0]):
-            t =  visualize_saliency(model, layer_idx, [neuron], seq_arrs[i])
-            t = np.max(t, axis=0)
-            smaps.append(t)
-        smaps = np.stack(smaps)
-        df = pd.DataFrame(smaps.T)
-        df.columns = seqs
-        for s in seqs:
-            df['seq_%s_motifs'%s] = np.nan
-            dft =  df_pos_module[df_pos_module['seq_idx'] == s]
-            for index, row in dft.iterrows():
-                start = row['within_seq_idx']
-                motifs = df_pos_motif[df_pos_motif['module_idx'] == row['module_idx']]
-                for index, motif in motifs.iterrows():
-                    df.loc[start + motif['within_module_idx'], 'seq_%s_motifs'%s] = motif["motif_name"]  
-        df.to_csv('%s%s_saliency_map.csv'%(outbase, neuron))
-        print('Write to %s%s_saliency_map.csv'%(outbase, neuron))
+        outfn = '%s%s_saliency_map.csv'%(outbase, neuron)
+        if not os.path.exists(outfn):
+            smaps = []
+            for i in range(seq_arrs.shape[0]):
+                t =  visualize_saliency(model, layer_idx, [neuron], seq_arrs[i])
+                t = np.max(t, axis=0)
+                smaps.append(t)
+            smaps = np.stack(smaps)
+            df = pd.DataFrame(smaps.T)
+            df.columns = seqs
+            for s in seqs:
+                df['seq_%s_motifs'%s] = np.nan
+                dft =  df_pos_module[df_pos_module['seq_idx'] == s]
+                for index, row in dft.iterrows():
+                    start = row['within_seq_idx']
+                    motifs = df_pos_motif[df_pos_motif['module_idx'] == row['module_idx']]
+                    for index, motif in motifs.iterrows():
+                        df.loc[start + motif['within_module_idx'], 'seq_%s_motifs'%s] = motif["motif_name"]
+            df.to_csv(outfn)
+            print('Write to %s'%outfn)
 
 
-def neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs, 
+def neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs,
               df_neg_motif, outbase):
     neurons = model.layers[layer_idx].filters
     for neuron in range(neurons):
@@ -63,10 +65,10 @@ def main():
             help="path to the trained model")
     arg_parser.add_argument("--simdnadir", required=True,
             help="the directory with simulated DNA information")
-    arg_parser.add_argument("--layer_indices", type=int, nargs='+', 
+    arg_parser.add_argument("--layer_indices", type=int, nargs='+',
             help="which layer to generate saliency map")
     arg_parser.add_argument("--n", default=20, type=int,
-            help="how many instances to use")    
+            help="how many instances to use")
     arg_parser.add_argument("--out", required=True,
             help="Output directory")
 

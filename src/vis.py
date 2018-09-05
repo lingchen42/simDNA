@@ -11,7 +11,7 @@ def load(model_path, input_seq_path):
   Load model and input sequences
 
   Args:
-    model_path: path to a hdf5 file of keras model that has 
+    model_path: path to a hdf5 file of keras model that has
                 weights and structure in it.
     input_seq_path: path to the hdf5 file of input sequences
 
@@ -20,7 +20,7 @@ def load(model_path, input_seq_path):
     Input sequence ndarrays if input_seq_path is specified
   """
   model = load_model(model_path, custom_objects={'tf':tf})
-    
+
   if input_seq_path:
     input_h5 = h5py.File(input_seq_path, 'r')
     X = input_h5.get("in")
@@ -44,19 +44,17 @@ def get_filter_pos_output(X, model, layer_name, filter_idx, top_frac,
 
   Args:
     learning_phase: 0, test; 1, train.
-  
+
   Returns:
     positive_activation_values
     coordinates_of_those_values): The coordinates are expressed by a 3 element tuple:
                                   (array_of_seq_idx, array_of_0s, array_of_output_idx)
   """
-  
-    
+
+
   n_batches = X.shape[0]/batch_size
   X_batches = np.array_split(X, n_batches)
 
-  for index, layer in enumerate(model.layers):
-      print("layer_idx: ", index, "layer name: ", layer.name)
   layer_dict = dict([(layer.name, layer) for layer in model.layers])
   model_input = model.inputs[0]
 
@@ -78,16 +76,16 @@ def get_filter_pos_output(X, model, layer_name, filter_idx, top_frac,
     outputs = []
     for x in X_batches:
       outputs.append(get_filter_ouput([x, learning_phase])[0])
-  
+
   output = np.concatenate(outputs, axis=0)
 
   if weightbyvalue or top_frac or pos_seq_out:
     pos_output = output[output>0]
   else:
     pos_output = None
-  
+
   # convert to a list of tuples: [(seq_idx, 0, output_idx1)]
-  coordinates_of_pos_output = zip(*np.where(output>0)) 
+  coordinates_of_pos_output = zip(*np.where(output>0))
 
   return pos_output, coordinates_of_pos_output
 
@@ -107,26 +105,26 @@ def f_window(i, kernel_sizes, strides):
 
 
 def get_pos_seqs(X, model, layer_name, coordinates_of_pos_output):
-  """Convert the each coordinate in coordinates_of_pos_output to corresponding 
+  """Convert the each coordinate in coordinates_of_pos_output to corresponding
   input region (numpy slices)
-  More specifically, 
+  More specifically,
   from (array([seq1, seq2, ... seqi ...]), array([0, 0, ..., 0]), array([output_idx1, ... output_idxi ...]))
   to [slice1, slice2 ... slicei ...]
   slicei: X[seqi, 0, :, f_start(output_idx1):f_end(output_idx)]
   slicei has shape (4, window_size)
-  
+
   Args:
     X: input
     model: keras model
     coordinates_of_pos_output: output from get_filter_pos_output
- 
+
   Returns:
     pos_seqs:a list of arrays. Each array is a sequence that corresponding to each
              coordinate in coordinates_of_pos_output
-  """ 
-  
+  """
+
   layers = [l for l in model.layers if ("conv2d" in l.name) or ("pooling2d" in l.name)]
-  
+
   kernel_sizes = []
   strides = []
   layer_names = []
@@ -137,7 +135,7 @@ def get_pos_seqs(X, model, layer_name, coordinates_of_pos_output):
       kernel_sizes.append(l.kernel_size[1])
     else: # max_pooling2d
       kernel_sizes.append(l.pool_size[1])
-  
+
   layer_i = layer_names.index(layer_name)
   pos_seqs = []
   window = f_window(layer_i, kernel_sizes, strides)
@@ -148,15 +146,15 @@ def get_pos_seqs(X, model, layer_name, coordinates_of_pos_output):
     pos_seqs.append(X[c[0], 0, :, start:end])
 
   pos_seqs = np.array(pos_seqs).astype('int8')
-  
+
   return pos_seqs
 
 
 def seqs2pfm(pos_seqs, pos_output, top_frac, weightbyvalue):
   """Convert sequences (in ndarray format) to pfms.
-  
+
   Args:
-      pos_seqs 
+      pos_seqs
       pos_output
       top_frac: if you only want to convert the top fraction of the sequences
                 to pfm
@@ -167,18 +165,18 @@ def seqs2pfm(pos_seqs, pos_output, top_frac, weightbyvalue):
   """
   if weightbyvalue:
       pos_seqs = pos_seqs * pos_output
-  
+
   if top_frac:
       print("Using top %s sequences"%top_frac)
       kth = int(- top_frac * pos_output.shape[0])
       pos_seqs = pos_seqs[np.argpartition(pos_output, kth)[kth:]] # worse is linear
-  
+
   pfm = np.sum(pos_seqs, axis=0)
 
-  return pfm  
+  return pfm
 
 
-def seqs2h5(pos_seqs, pos_output, coordinates_of_pos_output, 
+def seqs2h5(pos_seqs, pos_output, coordinates_of_pos_output,
             outdir, layer_name, filter_idx):
   """
   write the pos seqs to a h5 file
@@ -187,14 +185,14 @@ def seqs2h5(pos_seqs, pos_output, coordinates_of_pos_output,
 
   h5_out = os.path.join(outdir, "%s-%s.h5"%(layer_name, filter_idx))
   h5f = h5py.File(h5_out,  "w")
-  h5f.create_dataset('coordinates_of_pos_output', 
+  h5f.create_dataset('coordinates_of_pos_output',
                         data=coordinates_of_pos_output,
                         compression='gzip',
                         compression_opts=9)
-  h5f.create_dataset('activation_values', data=pos_output, 
-                      compression='gzip', compression_opts=9)
-  h5f.create_dataset('seqs', data=pos_seqs,
-                      compression='gzip', compression_opts=9)
+  h5f.create_dataset('activation_values', data=pos_output)
+  #                    compression='gzip', compression_opts=9)
+  h5f.create_dataset('seqs', data=pos_seqs)
+  #                    compression='gzip', compression_opts=9)
   h5f.close()
 
 
@@ -202,29 +200,29 @@ def write_jaspar_pfm(pfm, outdir, layer_name, filter_idx):
   """
   write the pfm as jaspar 2016 format
   """
-  
+
   if not os.path.exists(outdir): os.makedirs(outdir)
-  
+
   pfm_outfn = os.path.join(outdir, "%s-%s.pfm"%(layer_name, filter_idx))
   with open(pfm_outfn, "w+") as pfm_outfh:
     try:
-      np.savetxt(pfm_outfh, pfm, fmt="%d", delimiter="\t") 
+      np.savetxt(pfm_outfh, pfm, fmt="%d", delimiter="\t")
     except:
       print pfm
   print "Write the pfm to %s"%(pfm_outfh)
 
 
-def vis_by_fp(model_path, input_seq_path, layer_name, filter_indices, outdir, 
+def vis_by_fp(model_path, input_seq_path, layer_name, filter_indices, outdir,
               top_frac=None, weightbyvalue=False, pos_seq_out=False,
               learning_phase=0, gpu=False):
-  """ 
+  """
   Generate the pfm for `filter_indices` in the given `layer_name`.
 
   Args:
     X : Input DNA sequences.
     model: A `keras.model.Model` instance.
     layer_name: The name of layer as in `model.layers[idx].name`.
-    filter_indices: filter_indices to generate pfms for. 
+    filter_indices: filter_indices to generate pfms for.
                     If None, all filters will be visualized.
 
   Returns:
@@ -237,8 +235,8 @@ def vis_by_fp(model_path, input_seq_path, layer_name, filter_indices, outdir,
   model = be_simple(model)
   for filter_idx in filter_indices:
     print "Filter: %s"%(filter_idx)
-    pos_output, coordinates_of_pos_output = get_filter_pos_output(X, model, 
-                                                          layer_name, 
+    pos_output, coordinates_of_pos_output = get_filter_pos_output(X, model,
+                                                          layer_name,
                                                           filter_idx,
                                                           top_frac,
                                                           weightbyvalue,
@@ -248,7 +246,7 @@ def vis_by_fp(model_path, input_seq_path, layer_name, filter_indices, outdir,
     pos_seqs = get_pos_seqs(X, model, layer_name, coordinates_of_pos_output)
     pfm = seqs2pfm(pos_seqs, pos_output, top_frac, weightbyvalue)
     write_jaspar_pfm(pfm, outdir, layer_name, filter_idx)
-    
+
     if pos_seq_out and pos_seqs.size:
       seqs2h5(pos_seqs, pos_output, coordinates_of_pos_output, outdir, layer_name, filter_idx)
 
