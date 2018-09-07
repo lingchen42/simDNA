@@ -1,5 +1,5 @@
-from am import *
 from backprop_modifier import *
+from am import *
 
 def normalize(array, min_value=0., max_value=1.):
     """Normalizes the numpy array to (min_value, max_value)
@@ -16,7 +16,7 @@ def normalize(array, min_value=0., max_value=1.):
     return (max_value - min_value) * normalized + min_value
 
 
-def visualize_saliency_with_losses(input_tensor, losses, seed_input, wrt_tensor=None, grad_modifier=None):
+def visualize_saliency_with_losses(input_tensor, losses, seed_input, wrt_tensor=None, grad_modifier=None, norm=False):
     """Generates an attention heatmap over the `seed_input` by using positive gradients of `input_tensor`
     with respect to weighted `losses`.
     This function is intended for advanced use cases where a custom loss is desired. For common use cases,
@@ -42,7 +42,12 @@ def visualize_saliency_with_losses(input_tensor, losses, seed_input, wrt_tensor=
 
     channel_idx = 1 if K.image_data_format() == 'channels_first' else -1
     grads = np.max(grads, axis=channel_idx)
-    return normalize(grads)[0]
+    
+    if norm:
+        grads = normalize(grads)[0]
+    else:
+        grads = grads[0]
+    return grads
 
 
 def visualize_saliency(model, layer_idx, filter_indices, seed_input,

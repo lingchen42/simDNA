@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import absolute_import
 import os
 import sys
 sys.path.insert(0, '../src')
@@ -7,7 +8,38 @@ import pandas as pd
 import h5py
 from saliency import *
 from keras.models import load_model
+import tempfile
+import inspect
+import numpy as np
 import tensorflow as tf
+from tensorflow.python.framework import ops
+from keras.layers import advanced_activations, Activation
+
+# define new gradient
+def _register_guided_gradient(name):
+    if name not in ops._gradient_registry._registry:
+        @tf.RegisterGradient(name)
+        def _guided_backprop(op, grad):
+            dtype = op.outputs[0].dtype
+            gate_g = tf.cast(grad > 0., dtype)
+            gate_y = tf.cast(op.outputs[0] > 0, dtype)
+            return gate_y * gate_g * grad
+        
+        
+def _register_thres_guided_gradient(name, thres):
+    if name not in ops._gradient_registry._registry:
+        @tf.RegisterGradient(name)
+        def _thres_guided_backprop(op, grad):
+            dtype = op.outputs[0].dtype
+            gate_g = tf.cast(grad > 0., dtype)
+            gate_y = tf.cast(op.outputs[0] > thres, dtype)
+            return gate_y * gate_g * grad
+        
+        
+_BACKPROP_MODIFIERS = {
+    'guided': _register_guided_gradient,
+    'thres_guided': _register_thres_guided_gradient
+}        
 
 
 def pos_smaps(layer_idx, model, seq_arrs, seqs,
@@ -19,7 +51,8 @@ def pos_smaps(layer_idx, model, seq_arrs, seqs,
             smaps = []
             for i in range(seq_arrs.shape[0]):
                 t =  visualize_saliency(model, layer_idx, [neuron], seq_arrs[i])
-                t = np.max(t, axis=0)
+                #t = np.max(t, axis=0)
+                t = np.sum(t, axis=0)
                 smaps.append(t)
             smaps = np.stack(smaps)
             df = pd.DataFrame(smaps.T)
@@ -63,6 +96,8 @@ def main():
     arg_parser = argparse.ArgumentParser(description="DNA convolutional network")
     arg_parser.add_argument("--model", required=True,
             help="path to the trained model")
+    arg_parser.add_argument("--guided", default=False,
+            action="store_true", help="whether to use guided backprop or not")
     arg_parser.add_argument("--simdnadir", required=True,
             help="the directory with simulated DNA information")
     arg_parser.add_argument("--layer_indices", type=int, nargs='+',
@@ -79,6 +114,30 @@ def main():
 
     # load model
     model = load_model(args.model, custom_objects={"tf":tf})
+    
+    if args.guided:
+        # clone model
+        model_path = os.path.join(tempfile.gettempdir(), next(tempfile._get_candidate_names()) + '.h5')
+        model.save(model_path)
+        modified_model = load_model(model_path)
+
+        # register gradient
+        backprop_modifier = 'guided'
+        modifier_fn = _BACKPROP_MODIFIERS.get(backprop_modifier)
+        modifier_fn(backprop_modifier)
+
+        thres_backprop_modifier = 'thres_guided'
+        modifier_fn = _BACKPROP_MODIFIERS.get(thres_backprop_modifier)
+        modifier_fn(thres_backprop_modifier, thres=3)
+
+        # This should rebuild graph with modifications
+        with tf.get_default_graph().gradient_override_map({'Relu': backprop_modifier, 
+                                                           'ThresholdedReLU': thres_backprop_modifier}):
+                modified_model = load_model(model_path)
+                model = modified_model
+
+        # remove temp file
+        os.remove(model_path)
 
     # file path
     simdna_dir = args.simdnadir    
@@ -117,8 +176,8 @@ def main():
         print('#'*80)
         print('Calculating layer %s'%layer_idx)
         outbase = os.path.join(out, 'layer%s_neuron'%layer_idx)
-        #pos_smaps(layer_idx, model, seq_arrs, seqs, 
-        #      df_pos_module, df_pos_motif, outbase)
+        pos_smaps(layer_idx, model, seq_arrs, seqs, 
+              df_pos_module, df_pos_motif, outbase)
         neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs, 
               df_neg_motif, outbase)
 

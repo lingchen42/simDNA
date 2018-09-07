@@ -351,7 +351,7 @@ _PRINT_CALLBACK = Print()
 
 class Optimizer(object):
 
-    def __init__(self, input_tensor, losses, input_range=(0, 255), wrt_tensor=None, norm_grads=True):
+    def __init__(self, input_tensor, losses, input_range=(0, 255), wrt_tensor=None, norm_grads=False):
         self.input_tensor = input_tensor
         self.input_range = input_range
         self.loss_names = []
@@ -370,6 +370,7 @@ class Optimizer(object):
         # Compute gradient of overall with respect to `wrt` tensor.
         grads = K.gradients(overall_loss, self.wrt_tensor)[0]
         if norm_grads:
+            print("Normalized grads")
             grads = grads / (K.sqrt(K.mean(K.square(grads))) + K.epsilon())
 
         # The main function to compute various quantities in optimization loop.

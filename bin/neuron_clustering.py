@@ -1,12 +1,22 @@
 #!/usr/bin/env python
+import itertools
 import argparse
+from collections import OrderedDict
 
 import h5py
+from scipy import stats
 import pandas as pd
 import numpy as np
 from keras.models import load_model
 import keras.backend as K
 import tensorflow as tf
+
+
+def tf_family_d():
+    fn = "/dors/capra_lab/users/chenl/data/DerivedData/HOCOMOCOv11_full_annotation_HUMAN_mono.tsv"
+    dftf = pd.read_table(fn)
+    tffamilyd = dict(zip(dftf["Transcription factor"], dftf["TF subfamily"]))
+    return tffamilyd
 
 
 def f_window(i, kernel_sizes, strides):
@@ -95,7 +105,8 @@ def get_layer_output(X, model, layer_idx, learning_phase=0):
 
 
 def compute_corr(X, model, layer_idx1, layer_idx2,
-                 out_window_size1, batch_size, psuedo_value=1e-10):
+                 out_window_size1, batch_size, method='spearman',
+                 psuedo_value=1e-10):
 
     # pearson's correlation between
     # max of layer 1 in the first receptive field of layer 2
@@ -119,23 +130,32 @@ def compute_corr(X, model, layer_idx1, layer_idx2,
     output1 = np.squeeze(np.concatenate(output1s, axis=0))
     output2 = np.squeeze(np.concatenate(output2s, axis=0))
 
-    # vectorization way to compute pairwise pearson's r
-    n = output1.shape[0]
-    s1 = output1.sum(0)
-    s2 = output2.sum(0)
-    p1 = n*np.dot(output2.T, output1)
-    p2 = s1*s2[:,None]
-    p3 = n*((output2**2).sum(0)) - (s2**2)
-    #adding pseudo value to avoid square root 0 error
-    p3 = p3 + np.max(p3) * psuedo_value
-    p4 = n*((output1**2).sum(0)) - (s1**2)
-    pcorr = ((p1 - p2)/np.sqrt(p4*p3[:,None]))
+    if method == "pearson":
+        # vectorization way to compute pairwise pearson's r
+        n = output1.shape[0]
+        s1 = output1.sum(0)
+        s2 = output2.sum(0)
+        p1 = n*np.dot(output2.T, output1)
+        p2 = s1*s2[:,None]
+        p3 = n*((output2**2).sum(0)) - (s2**2)
+        #adding pseudo value to avoid square root 0 error
+        p3 = p3 + np.max(p3) * psuedo_value
+        p4 = n*((output1**2).sum(0)) - (s1**2)
+        corr = ((p1 - p2)/np.sqrt(p4*p3[:,None]))
+    else:
+        corr, p = stats.spearmanr(output1, output2)
+        s =  output1.shape[-1]
+        indices = list(itertools.product(range(s),
+                                         range(s, 2*s)))
+        corr = corr[zip(*indices)]
+        corr = corr.reshape(s, -1)
+        corr = np.nan_to_num(corr)
 
-    return pcorr
+    return corr
 
 
 def compute_l1_corr(X, model, layer_idx1,
-                    out_window_size1, method = "pearsonr", batch_size=500):
+                    out_window_size1, batch_size=500):
 
     # pearson's correlation between
     # max of layer 1 neurons in the first receptive field of layer 2
@@ -174,6 +194,8 @@ def main():
             help="path to the trained model")
     arg_parser.add_argument("--conv1_tomtom", default=None,
             help="tomtom.txt results of conv layer 1")
+    arg_parser.add_argument("--conv1_config", default=None,
+            help="tomtom.txt results of conv layer 1")
     arg_parser.add_argument("--layer_indicies", type=int, nargs='+',
             help="which two layer to generate saliency map")
     arg_parser.add_argument("--h5base", required=True,
@@ -194,7 +216,10 @@ def main():
 
     # load model
     model = load_model(model_path, custom_objects={"tf":tf})
-
+    
+    # tffamilyd
+    tffamilyd = tf_family_d()
+    
     # first layer neuron meaning;
     if args.conv1_tomtom:
         d_conv_1 = {}
@@ -204,7 +229,30 @@ def main():
         for key, grp in grped:
             t = grp.sort_values("p-value", ascending=True)
             tf = list(t["Target ID"])[0]
+            tf = tf.split("_")[0]
             d_conv_1[int(key.split("-")[-1])] = tf
+    
+    # first layer neuron by setup
+    if args.conv1_config:
+        with open(args.conv1_config) as config_fh:
+            lines = config_fh.readlines()
+            pfm_d = OrderedDict()  
+            for l in lines:
+                if l.startswith('[') and (l not in ["[embed_params]\n", "[enhancer_classes]\n"]):
+                    current_module = l[1:-2]
+                if 'name' in l:
+                    pfm = l[:-1].split('=')[1]
+                    modules = pfm_d.get(pfm, [])
+                    modules.append(current_module)
+                    pfm_d[pfm] = modules
+                    
+            d_conv_1 = {}
+            for idx, item in enumerate(pfm_d.items()):
+                tffamily = tffamilyd.get(item[0], None)
+                tffamily = tffamily.split("{")[1][:-1]
+                d_conv_1[idx] = "%s(%s), %s"%(item[0], tffamily, 
+                                              ','.join(item[1]))
+    print d_conv_1
 
     # use the top N seqs from each neuron as the input seqs to narrow down the search space
     # will use the sequences from the higher level neurons
@@ -215,13 +263,14 @@ def main():
 
     # compute correlation matrix between conv layer 1 and conv layer2
     # pcorr has the shape of (#layer2_filters, #layer1_filters)
+    # pearson is much more interpretable than spearman
     print("Caculating corr between %s and %s"%(model.layers[l1].name, model.layers[l2].name))
     pcorr = compute_corr(X, model, layer_idx1=l1, layer_idx2=l2,
-                         out_window_size1=window_size, batch_size=500)
+                         out_window_size1=window_size, method="pearson", batch_size=500)
     df = pd.DataFrame(pcorr)
     df.columns = ["%s_%s"%(model.layers[l1].name, i) for i in range(0, len(df.columns))]
     df.index = ["%s_%s"%(model.layers[l2].name, i) for i in range(0, len(df.index))]
-    if (l1 == 0) and args.conv1_tomtom:
+    if (l1 == 0):
         df.columns = [d_conv_1.get(int(i.split('_')[-1]), None) for i in df.columns]
     df.to_csv(outfn)
 
