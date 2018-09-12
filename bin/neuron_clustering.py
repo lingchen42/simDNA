@@ -27,13 +27,13 @@ def f_window(i, kernel_sizes, strides):
 
 
 def receptive_field_size(model, layer_i):
-    layers = [l for l in model.layers if ("conv2d" in l.name) or \
-                                         ("max_pooling2d" in l.name)]
+    layers = [l for l in model.layers if ("conv" in l.name) or \
+                                         ("pooling" in l.name)]
     kernel_sizes = []
     strides = []
-    layer_names = []
+#    layer_names = []
     for l in layers:
-        layer_names.append(l.name)
+#        layer_names.append(l.name)
         strides.append(l.strides[1])
         if "conv2d" in l.name:
             kernel_sizes.append(l.kernel_size[1])
@@ -53,7 +53,30 @@ def zero_padding(x, window_size, whole_len):
     return x
 
 
-def prep_input_seqs(h5base, whole_len, n_filters, nmax):
+def prep_input_seqs_enh_class(pos_motif_fn, h5fn, n, window_size):
+    h5 = h5py.File(h5fn)
+    seqs = h5.get('in')
+    seq_arrs = []
+
+    # get n instance of each reg module in postive sequneces
+    # for each instance, take out the parts with reg modules
+    df_pos_motif = pd.read_csv(pos_motif_fn, index_col=0)
+    grped = df_pos_motif.groupby('class')
+    for key, grp in grped:
+        for index, row in grp[:n].iterrows():
+            seq_idx = row['seq_idx']
+            modules = eval(row['regulatory_module_coord'])
+            for m in modules:
+                seq_arrs.append(seqs[seq_idx, :, m[0]:(m[0]+window_size)])
+
+    seq_arrs = np.vstack(seq_arrs)
+    seq_arrs = np.expand_dims(seq_arrs, axis=1)
+    print(seq_arrs.shape)
+
+    return seq_arrs
+
+
+def prep_input_seqs_max_av(h5base, whole_len, n_filters, nmax):
 
     max_seqs = []
     for i in range(0, n_filters):
@@ -192,15 +215,23 @@ def main():
     arg_parser = argparse.ArgumentParser(description="DNA convolutional network")
     arg_parser.add_argument("--model", required=True,
             help="path to the trained model")
+    arg_parser.add_argument("--max_seq", action='store_true',
+            help="use the top N seqs from each neuron as the input seqs; use with --h5base")
+    arg_parser.add_argument("--module_seq", action='store_true',
+            help="use the modules in the first N seqs of each enhancer class; use with --datah5, --pos_motif_fn")
+    arg_parser.add_argument("--datah5",
+            help="the data of whole set of the simulated enhancers in h5 file.")
+    arg_parser.add_argument("--pos_motif_fn",
+            help="the pos_motif_positions.csv file that stores the simulated module positions in positive seqs.")
     arg_parser.add_argument("--conv1_tomtom", default=None,
             help="tomtom.txt results of conv layer 1")
     arg_parser.add_argument("--conv1_config", default=None,
             help="tomtom.txt results of conv layer 1")
     arg_parser.add_argument("--layer_indicies", type=int, nargs='+',
             help="which two layer to generate saliency map")
-    arg_parser.add_argument("--h5base", required=True,
+    arg_parser.add_argument("--h5base",
             help="the h5 base for the maximally activating sequences; h5base_<neuron>.h5")
-    arg_parser.add_argument("--n", default=100, type=int,
+    arg_parser.add_argument("-n", default=100, type=int,
             help="how many sequencs to use; default 100")
     arg_parser.add_argument("--out", required=True,
             help="Output directory")
@@ -216,10 +247,10 @@ def main():
 
     # load model
     model = load_model(model_path, custom_objects={"tf":tf})
-    
+
     # tffamilyd
     tffamilyd = tf_family_d()
-    
+
     # first layer neuron meaning;
     if args.conv1_tomtom:
         d_conv_1 = {}
@@ -231,12 +262,12 @@ def main():
             tf = list(t["Target ID"])[0]
             tf = tf.split("_")[0]
             d_conv_1[int(key.split("-")[-1])] = tf
-    
+
     # first layer neuron by setup
     if args.conv1_config:
         with open(args.conv1_config) as config_fh:
             lines = config_fh.readlines()
-            pfm_d = OrderedDict()  
+            pfm_d = OrderedDict()
             for l in lines:
                 if l.startswith('[') and (l not in ["[embed_params]\n", "[enhancer_classes]\n"]):
                     current_module = l[1:-2]
@@ -245,21 +276,29 @@ def main():
                     modules = pfm_d.get(pfm, [])
                     modules.append(current_module)
                     pfm_d[pfm] = modules
-                    
+
             d_conv_1 = {}
             for idx, item in enumerate(pfm_d.items()):
                 tffamily = tffamilyd.get(item[0], None)
                 tffamily = tffamily.split("{")[1][:-1]
-                d_conv_1[idx] = "%s(%s), %s"%(item[0], tffamily, 
+                d_conv_1[idx] = "%s(%s), %s"%(item[0], tffamily,
                                               ','.join(item[1]))
     print d_conv_1
 
-    # use the top N seqs from each neuron as the input seqs to narrow down the search space
-    # will use the sequences from the higher level neurons
-    whole_len = model.inputs[0].get_shape().as_list()[-1]
-    X, window_size = prep_input_seqs(h5base, whole_len,
-                        n_filters=model.layers[l2].filters, nmax=nmax)
-    print("window size %s"%window_size)
+    if args.max_seq:
+        # use the top N seqs from each neuron as the input seqs to narrow down the search space
+        # will use the sequences from the higher level neurons
+        whole_len = model.inputs[0].get_shape().as_list()[-1]
+        X, window_size = prep_input_seqs_max_av(h5base, whole_len,
+                            n_filters=model.layers[l2].filters, nmax=nmax)
+
+    if args.module_seq:
+        # use the modules in the first N seqs of each enhancer class
+        pos_motif_fn = args.pos_motif_fn
+        h5fn = args.datah5
+        window_size = receptive_field_size(model, l2)
+        print("window size %s"%window_size)
+        X = prep_input_seqs_enh_class(pos_motif_fn, h5fn, nmax, window_size)
 
     # compute correlation matrix between conv layer 1 and conv layer2
     # pcorr has the shape of (#layer2_filters, #layer1_filters)
