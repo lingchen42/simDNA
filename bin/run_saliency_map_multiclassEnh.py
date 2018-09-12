@@ -8,6 +8,7 @@ import argparse
 import pandas as pd
 import h5py
 from saliency import *
+from keras import backend as K
 from keras.models import load_model
 from keras import activations
 import tempfile
@@ -44,25 +45,39 @@ _BACKPROP_MODIFIERS = {
 }
 
 
-def get_smaps(layer_idx, model, neuron_start, neuron_end,
-              seq_arrs, seqs, df_motif, outbase, mode):
+def get_amaps(layer_idx, model, neuron_start, neuron_end,
+              seq_arrs, seqs, df_motif, outbase, mode, offset=0):
     #neurons = model.layers[layer_idx].filters
     for neuron in range(neuron_start, neuron_end):
         outfn = '%s%s_%s_saliency_map.csv'%(outbase, neuron, mode)
         if not os.path.exists(outfn):
             print("Calculating saliency maps for neuron %s"%neuron)
             print('Write to %s'%outfn)
-            smaps = []
-            for i in range(seq_arrs.shape[0]):
-                t = visualize_saliency(model, layer_idx, [neuron], seq_arrs[i])
-                #t = np.max(t, axis=0)
-                smaps.append(t)
-            smaps = np.stack(smaps)
-            smaps = np.max(smaps, axis=1)
-            df = pd.DataFrame(smaps.T)
+
+            if layer_idx == 0:
+                print('For the first layer, will use the layer output as activation, with 0 patches')
+                get_amaps = K.function([model.input, K.learning_phase()],
+                              [model.layers[layer_idx].output[:, neuron, 0, :]])
+                amaps = get_amaps([seq_arrs, 0])[0]
+                s = list(amaps.shape[:-1]) +\
+                       [model.input.get_shape().as_list()[-1] - amaps.shape[-1]]
+                amaps = np.concatenate([amaps, np.zeros(s)], axis=-1)
+
+            else:
+                amaps = []
+                for i in range(seq_arrs.shape[0]):
+                    t = visualize_saliency(model, layer_idx, [neuron], seq_arrs[i])
+                    #t = np.max(t, axis=0)
+                    amaps.append(t)
+                amaps = np.stack(amaps)
+                seq_arrs = np.squeeze(seq_arrs)
+                amaps = np.multiply(amaps, seq_arrs).sum(axis=1)  # saliency * nucleotide = activation maps
+
+            df = pd.DataFrame(amaps.T)
             df.columns = seqs
             for s in seqs:
                 df['seq_%s_motifs'%s] = np.nan
+                s = s + offset
                 dft =  df_motif[df_motif['seq_idx'] == s]
                 for index, row in dft.iterrows():
                     motifs = eval(row['motif_coord'])
@@ -70,7 +85,7 @@ def get_smaps(layer_idx, model, neuron_start, neuron_end,
                         # motif = (motif_coord, motif_name)
                         df.loc[motif[0], 'seq_%s_motifs'%s] = motif[1]
             df.to_csv(outfn)
-            del smaps
+            del amaps
             del df
             collected = gc.collect()
             print("Garbage collector: collected", "%d objects." % collected)
@@ -161,7 +176,8 @@ def main():
     # get n instances of each motif in the negative sequences
     # that correspond to pos seqs
     df_neg_motif = pd.read_csv(neg_motif_fn, index_col=0)
-    neg_seqs_indices = [i + h5.get('in').shape[0]/2 for i in seqs]
+    neg_offset = h5.get('in').shape[0]/2
+    neg_seqs_indices = [i + neg_offset for i in seqs]
     neg_seq_arrs = h5.get('in')[neg_seqs_indices]
     neg_seq_arrs = np.array(neg_seq_arrs)
     neg_seq_arrs = np.expand_dims(neg_seq_arrs, axis=1)
@@ -174,6 +190,8 @@ def main():
 
         if args.neurons:
             neuron_start, neuron_end = args.neurons
+            if neuron_end == neuron_start:
+                neuron_end = neuron_start + 1
         else:
             neuron_start = 0
             neuron_end = model.layers[layer_idx].filters
@@ -181,11 +199,11 @@ def main():
         print('Calculating layer %s, %s'%(layer_idx,
                                           model.layers[layer_idx].name))
         outbase = os.path.join(out, 'layer%s_neuron'%layer_idx)
-        get_smaps(layer_idx, model, neuron_start, neuron_end,
+        get_amaps(layer_idx, model, neuron_start, neuron_end,
                   seq_arrs, seqs, df_pos_motif, outbase, mode="pos")
-        get_smaps(layer_idx, model, neuron_start, neuron_end,
+        get_amaps(layer_idx, model, neuron_start, neuron_end,
                   neg_seq_arrs, neg_seqs_indices,
-                  df_neg_motif, outbase, mode="neg")
+                  df_neg_motif, outbase, mode="neg", offset=neg_offset)
 
 
 if __name__ == '__main__':

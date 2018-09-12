@@ -24,8 +24,8 @@ def _register_guided_gradient(name):
             gate_g = tf.cast(grad > 0., dtype)
             gate_y = tf.cast(op.outputs[0] > 0, dtype)
             return gate_y * gate_g * grad
-        
-        
+
+
 def _register_thres_guided_gradient(name, thres):
     if name not in ops._gradient_registry._registry:
         @tf.RegisterGradient(name)
@@ -34,12 +34,12 @@ def _register_thres_guided_gradient(name, thres):
             gate_g = tf.cast(grad > 0., dtype)
             gate_y = tf.cast(op.outputs[0] > thres, dtype)
             return gate_y * gate_g * grad
-        
-        
+
+
 _BACKPROP_MODIFIERS = {
     'guided': _register_guided_gradient,
     'thres_guided': _register_thres_guided_gradient
-}        
+}
 
 
 def pos_smaps(layer_idx, model, seq_arrs, seqs,
@@ -86,7 +86,7 @@ def neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs,
             df['seq_%s_motifs'%s] = np.nan
             dft =  df_neg_motif[df_neg_motif['seq_idx'] == s]
             for index, row in dft.iterrows():
-                df.loc[row['within_seq_idx'], 'seq_%s_motifs'%s] = row["regulatory_module_name"]  
+                df.loc[row['within_seq_idx'], 'seq_%s_motifs'%s] = row["regulatory_module_name"]
         df.to_csv('%s%s_saliency_map_negative_seqs.csv'%(outbase, neuron))
         print('Write to %s%s_saliency_map_negative_seqs.csv'%(outbase, neuron))
 
@@ -114,7 +114,7 @@ def main():
 
     # load model
     model = load_model(args.model, custom_objects={"tf":tf})
-    
+
     if args.guided:
         # clone model
         model_path = os.path.join(tempfile.gettempdir(), next(tempfile._get_candidate_names()) + '.h5')
@@ -131,7 +131,7 @@ def main():
         modifier_fn(thres_backprop_modifier, thres=3)
 
         # This should rebuild graph with modifications
-        with tf.get_default_graph().gradient_override_map({'Relu': backprop_modifier, 
+        with tf.get_default_graph().gradient_override_map({'Relu': backprop_modifier,
                                                            'ThresholdedReLU': thres_backprop_modifier}):
                 modified_model = load_model(model_path)
                 model = modified_model
@@ -140,7 +140,7 @@ def main():
         os.remove(model_path)
 
     # file path
-    simdna_dir = args.simdnadir    
+    simdna_dir = args.simdnadir
     pos_module_fn = os.path.join(simdna_dir, 'pos_module_positions.csv')
     pos_motif_fn = os.path.join(simdna_dir, 'pos_motif_positions.csv')
     neg_motif_fn =os.path.join(simdna_dir, 'neg_motif_positions.csv')
@@ -176,9 +176,9 @@ def main():
         print('#'*80)
         print('Calculating layer %s'%layer_idx)
         outbase = os.path.join(out, 'layer%s_neuron'%layer_idx)
-        pos_smaps(layer_idx, model, seq_arrs, seqs, 
+        pos_smaps(layer_idx, model, seq_arrs, seqs,
               df_pos_module, df_pos_motif, outbase)
-        neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs, 
+        neg_smaps(layer_idx, model, neg_seq_arrs, neg_seqs,
               df_neg_motif, outbase)
 
 
