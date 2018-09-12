@@ -76,6 +76,23 @@ def neuron_response(motif_fn, smap_dir, fns, mode, window):
     return dft2
 
 
+def compute_heatmap(df, outfn):
+    grps = df.groupby("regulatory_module_group")
+    mean_avs = {}
+    for key, grp in grps:
+        module = key
+        mean_av = grp.mean(axis=0)
+        mean_avs[module] = mean_av
+    dft = pd.DataFrame(mean_avs)[2:]
+    cols = dft.columns
+    cols = [c for c in cols if ('not_in_module' not in c)]
+    dft = dft[cols]
+    cols = [c.replace('_cluster', '').replace('_in_', ',') for c in cols]
+    dft.columns = cols
+    print("Writing to %s"%outfn)
+    dft.to_csv(outfn)
+
+
 def main():
     # parse args
     arg_parser = argparse.ArgumentParser(description="DNA convolutional network")
@@ -88,7 +105,7 @@ def main():
     arg_parser.add_argument("--window", type=int, default=20,
             help="window to summarize gradient over the span of the motif;default 20bp")
     arg_parser.add_argument("--out", required=True,
-            help="Output directory")
+            help="Output filename")
 
     args = arg_parser.parse_args()
     smap_dir = args.smapdir
@@ -116,9 +133,14 @@ def main():
         dft_neg = neuron_response(neg_motif_fn, smap_dir, neg_fns, "neg", window)
         dfts.append(dft_neg)
 
+    # writing gradients summarized by regulatory module group
     dft = pd.concat(dfts)
     print("Writing to %s"%outfn)
     dft.to_csv(outfn)
+
+    # writing mean value of gradient*nucleotide for motif_in_module for
+    # heatmap generazation purpose
+    compute_heatmap(dft, outfn.replace('.csv', '_heatmap.csv'))
 
 
 if __name__ == '__main__':
